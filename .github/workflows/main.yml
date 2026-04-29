@@ -2,8 +2,8 @@ name: Auto Politics Shorts Generator
 
 on:
   schedule:
-    - cron: '0 */6 * * *'  # Har 6 ghante mein run hoga (aap change kar sakte hain)
-  workflow_dispatch:       # Manual run ka button enable karta hai
+    - cron: '0 */6 * * *'
+  workflow_dispatch:
 
 jobs:
   build-and-send:
@@ -18,12 +18,15 @@ jobs:
         with:
           python-version: '3.10'
 
-      - name: Install Dependencies
+      - name: Install System Dependencies (FFmpeg, ImageMagick, Fonts)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ffmpeg imagemagick ttf-mscorefonts-installer
+
+      - name: Install Python Libraries
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
-          # Linux font install karna zaroori hai taaki Arial font kaam kare
-          sudo apt-get install -y ttf-mscorefonts-installer
 
       - name: Run Automation Script
         env:
