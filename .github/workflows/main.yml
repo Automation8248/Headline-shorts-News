@@ -1,0 +1,31 @@
+name: Auto Politics Shorts Generator
+
+on:
+  schedule:
+    - cron: '0 */6 * * *'  # Har 6 ghante mein run hoga (aap change kar sakte hain)
+  workflow_dispatch:       # Manual run ka button enable karta hai
+
+jobs:
+  build-and-send:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v3
+
+      - name: Setup Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.10'
+
+      - name: Install Dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          # Linux font install karna zaroori hai taaki Arial font kaam kare
+          sudo apt-get install -y ttf-mscorefonts-installer
+
+      - name: Run Automation Script
+        env:
+          WEBHOOK_URL: ${{ secrets.WEBHOOK_URL }}
+        run: python main.py
