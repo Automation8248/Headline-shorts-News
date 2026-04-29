@@ -1,18 +1,16 @@
 import os
 import requests
 import feedparser
-import textwrap
 import subprocess
+import string
 from PIL import Image, ImageDraw, ImageFont
 from io import BytesIO
 
 # Webhook URL (GitHub Secrets se aayega)
 WEBHOOK_URL = os.environ.get("WEBHOOK_URL", "YOUR_WEBHOOK_URL_HERE")
 
-# Anti-blocking headers
 HEADERS = {
-    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8"
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
 }
 
 def get_latest_news():
@@ -22,7 +20,6 @@ def get_latest_news():
     
     for entry in feed.entries:
         title = entry.title
-        # Hashtags aur stars avoid karne ka logic
         clean_title = title.replace('#', '').replace('*', '').strip()
         
         image_url = None
@@ -34,8 +31,55 @@ def get_latest_news():
             
     return None, None
 
+def draw_colored_text_centered(draw, text, font, canvas_width, start_y):
+    """Bina AI ke kuch words ko highlight karta hai aur center align karta hai (Aapki image ki tarah)"""
+    words = text.split()
+    
+    # Logic: Sabse lambe 3 words nikal lo taaki unko highlight (Orange) kar sakein
+    clean_words = [w.translate(str.maketrans('', '', string.punctuation)) for w in words]
+    longest_words = set(sorted(clean_words, key=len, reverse=True)[:3])
+    
+    space_width = font.getlength(" ")
+    lines = []
+    current_line = []
+    current_line_width = 0
+    max_line_width = 950 # Side padding ke liye
+    
+    # Text ko lines mein todna (Wrapping)
+    for word in words:
+        word_clean = word.translate(str.maketrans('', '', string.punctuation))
+        is_highlight = word_clean in longest_words
+        
+        word_width = font.getlength(word)
+        if current_line and current_line_width + space_width + word_width > max_line_width:
+            lines.append(current_line)
+            current_line = [(word, is_highlight)]
+            current_line_width = word_width
+        else:
+            current_line.append((word, is_highlight))
+            if current_line_width == 0:
+                current_line_width = word_width
+            else:
+                current_line_width += space_width + word_width
+                
+    if current_line:
+        lines.append(current_line)
+
+    # Ab har line ko center mein draw karna
+    y = start_y
+    for line in lines:
+        # Line ki total width calculate karna (taaki center kar sakein)
+        line_width = sum(font.getlength(w) for w, _ in line) + space_width * (len(line) - 1)
+        x = (canvas_width - line_width) / 2 # Center X position
+        
+        for word, is_highlight in line:
+            # Highlight color set karna (Orange jaisa image mein hai)
+            color = "#FFA500" if is_highlight else "white"
+            draw.text((x, y), word, font=font, fill=color)
+            x += font.getlength(word) + space_width
+        y += font.size * 1.3 # Agli line ke liye gap
+
 def create_video_with_ffmpeg(text, image_url):
-    """Pillow se image edit karke FFmpeg se video banata hai"""
     print("Downloading image...")
     response = requests.get(image_url, headers=HEADERS)
     
@@ -43,11 +87,18 @@ def create_video_with_ffmpeg(text, image_url):
         print("Image download failed!")
         return None
 
-    # Image load aur resize karna (1080x1920 for Shorts)
+    # 1. Base Canvas banana (1080x1920 - Pura Black Background)
+    canvas = Image.new("RGB", (1080, 1920), "black")
+    
+    # 2. News Image ko load karna
     img = Image.open(BytesIO(response.content)).convert("RGB")
     
+    # 3. Image ko Upar ke hisse (Top 70%) ke hisaab se resize karna
+    target_width = 1080
+    target_height = 1350 # Upar ka hissa image ke liye
+    
     img_ratio = img.width / img.height
-    target_ratio = 1080 / 1920
+    target_ratio = target_width / target_height
     
     if img_ratio > target_ratio:
         new_width = int(target_ratio * img.height)
@@ -58,39 +109,32 @@ def create_video_with_ffmpeg(text, image_url):
         offset = (img.height - new_height) // 2
         img = img.crop((0, offset, img.width, offset + new_height))
         
-    img = img.resize((1080, 1920), Image.Resampling.LANCZOS)
+    img = img.resize((target_width, target_height), Image.Resampling.LANCZOS)
     
-    draw = ImageDraw.Draw(img)
+    # 4. News image ko black canvas par paste karna (Top par)
+    canvas.paste(img, (0, 0))
     
+    # 5. Text Draw karna (Neeche wale black hisse mein)
+    draw = ImageDraw.Draw(canvas)
     try:
-        font = ImageFont.truetype("arial.ttf", 60)
+        # Impact ya Arial Bold font ka use karne ki koshish karega (Meme look ke liye)
+        font = ImageFont.truetype("impact.ttf", 65)
     except IOError:
-        font = ImageFont.load_default()
+        try:
+            font = ImageFont.truetype("arialbd.ttf", 65)
+        except IOError:
+            font = ImageFont.load_default()
 
-    wrapped_text = textwrap.fill(text, width=25)
+    # Text ko canvas par Y=1420 position (Image ke thoda niche) se draw karna shuru karega
+    draw_colored_text_centered(draw, text, font, canvas_width=1080, start_y=1420)
     
-    box_x1, box_y1 = 50, 150
-    box_x2, box_y2 = 1030, 450
-    
-    draw.rectangle([box_x1, box_y1, box_x2, box_y2], fill="yellow", outline="black", width=3)
-    draw.text((box_x1 + 30, box_y1 + 30), wrapped_text, fill="black", font=font)
-    
-    # Save frame as JPG
     temp_image_path = "temp_frame.jpg"
-    img.save(temp_image_path)
+    canvas.save(temp_image_path)
     
-    # ---------------------------------------------------------
-    # FFmpeg Magic Starts Here (Replacing MoviePy)
-    # ---------------------------------------------------------
+    # 6. FFmpeg se 6 second ka video banana
     print("Generating video using FFmpeg...")
     video_path = "politics_short.mp4"
     
-    # FFmpeg command logic:
-    # -loop 1: ek hi image ko loop karega
-    # -framerate 24: 24 fps
-    # -t 6: 6 second ki duration
-    # -c:v libx264: H.264 codec (social media standard)
-    # -pix_fmt yuv420p: sabhi devices par chalne ke liye
     ffmpeg_cmd = [
         "ffmpeg", "-y", 
         "-loop", "1", 
@@ -103,7 +147,6 @@ def create_video_with_ffmpeg(text, image_url):
     ]
     
     try:
-        # Command ko execute karna
         subprocess.run(ffmpeg_cmd, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
         print("Video generated successfully!")
         return video_path
@@ -112,10 +155,9 @@ def create_video_with_ffmpeg(text, image_url):
         return None
 
 def send_to_webhook(video_path, text):
-    """Video ko webhook par bhejna"""
     print("Sending to Webhook...")
     with open(video_path, 'rb') as f:
-        payload = {"content": f"New Short Generated: {text}"}
+        payload = {"content": f"New Viral Short: {text}"}
         files = {"file": (video_path, f, "video/mp4")}
         response = requests.post(WEBHOOK_URL, data=payload, files=files)
         
