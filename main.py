@@ -2,14 +2,14 @@ import os
 import requests
 import feedparser
 import textwrap
+import subprocess
 from PIL import Image, ImageDraw, ImageFont
-from moviepy.editor import ImageClip
 from io import BytesIO
 
-# Webhook URL (Discord ya Make.com ka Webhook yahan dalein)
+# Webhook URL (GitHub Secrets se aayega)
 WEBHOOK_URL = os.environ.get("WEBHOOK_URL", "YOUR_WEBHOOK_URL_HERE")
 
-# Browser headers taaki websites humein bot samajh kar block na karein
+# Anti-blocking headers
 HEADERS = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
     "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8"
@@ -17,16 +17,14 @@ HEADERS = {
 
 def get_latest_news():
     """USA Politics ki latest news aur image fetch karta hai"""
-    # Yahoo News ya CNN ka feed use karna better hai kyuki isme direct images hoti hain
     rss_url = "https://news.yahoo.com/rss/politics"
     feed = feedparser.parse(rss_url)
     
     for entry in feed.entries:
         title = entry.title
-        # Text ko clean karna: Koi bhi extra symbols remove karein
+        # Hashtags aur stars avoid karne ka logic
         clean_title = title.replace('#', '').replace('*', '').strip()
         
-        # Image URL nikalna (RSS feed structure ke hisaab se)
         image_url = None
         if 'media_content' in entry:
             image_url = entry.media_content[0]['url']
@@ -36,8 +34,8 @@ def get_latest_news():
             
     return None, None
 
-def create_video(text, image_url):
-    """Image download karke uspe yellow background aur text lagata hai"""
+def create_video_with_ffmpeg(text, image_url):
+    """Pillow se image edit karke FFmpeg se video banata hai"""
     print("Downloading image...")
     response = requests.get(image_url, headers=HEADERS)
     
@@ -48,7 +46,6 @@ def create_video(text, image_url):
     # Image load aur resize karna (1080x1920 for Shorts)
     img = Image.open(BytesIO(response.content)).convert("RGB")
     
-    # Aspect ratio maintain karte hue crop/resize logic
     img_ratio = img.width / img.height
     target_ratio = 1080 / 1920
     
@@ -63,39 +60,56 @@ def create_video(text, image_url):
         
     img = img.resize((1080, 1920), Image.Resampling.LANCZOS)
     
-    # Drawing start
     draw = ImageDraw.Draw(img)
     
-    # Font setup (Default font load kar rahe hain, aap custom .ttf file use kar sakte hain)
     try:
         font = ImageFont.truetype("arial.ttf", 60)
     except IOError:
         font = ImageFont.load_default()
 
-    # Text formatting (Text ko multiple lines mein break karna)
     wrapped_text = textwrap.fill(text, width=25)
     
-    # Yellow background box coordinates
     box_x1, box_y1 = 50, 150
     box_x2, box_y2 = 1030, 450
     
-    # Draw Yellow Box
     draw.rectangle([box_x1, box_y1, box_x2, box_y2], fill="yellow", outline="black", width=3)
-    
-    # Draw Black Text inside the box
     draw.text((box_x1 + 30, box_y1 + 30), wrapped_text, fill="black", font=font)
     
-    # Save temporary image
+    # Save frame as JPG
     temp_image_path = "temp_frame.jpg"
     img.save(temp_image_path)
     
-    # Video Generation using MoviePy
-    print("Generating video...")
+    # ---------------------------------------------------------
+    # FFmpeg Magic Starts Here (Replacing MoviePy)
+    # ---------------------------------------------------------
+    print("Generating video using FFmpeg...")
     video_path = "politics_short.mp4"
-    clip = ImageClip(temp_image_path).set_duration(6) # 6 seconds ka short
-    clip.write_videofile(video_path, fps=24, codec="libx264")
     
-    return video_path
+    # FFmpeg command logic:
+    # -loop 1: ek hi image ko loop karega
+    # -framerate 24: 24 fps
+    # -t 6: 6 second ki duration
+    # -c:v libx264: H.264 codec (social media standard)
+    # -pix_fmt yuv420p: sabhi devices par chalne ke liye
+    ffmpeg_cmd = [
+        "ffmpeg", "-y", 
+        "-loop", "1", 
+        "-framerate", "24", 
+        "-i", temp_image_path,
+        "-c:v", "libx264", 
+        "-t", "6", 
+        "-pix_fmt", "yuv420p", 
+        video_path
+    ]
+    
+    try:
+        # Command ko execute karna
+        subprocess.run(ffmpeg_cmd, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        print("Video generated successfully!")
+        return video_path
+    except subprocess.CalledProcessError as e:
+        print(f"FFmpeg Error: {e.stderr.decode('utf-8')}")
+        return None
 
 def send_to_webhook(video_path, text):
     """Video ko webhook par bhejna"""
@@ -115,7 +129,7 @@ if __name__ == "__main__":
     
     if news_text and img_url:
         print(f"Found News: {news_text}")
-        video_file = create_video(news_text, img_url)
+        video_file = create_video_with_ffmpeg(news_text, img_url)
         
         if video_file:
             send_to_webhook(video_file, news_text)
