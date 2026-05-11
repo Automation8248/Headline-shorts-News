@@ -43,7 +43,7 @@ def draw_colored_text_centered(draw, text, font, canvas_width, top_y, bottom_y):
     lines = []
     current_line = []
     current_line_width = 0
-    max_line_width = 980 # Side padding ke liye (Bade text ke liye thoda space adjust kiya)
+    max_line_width = 980 # Side padding ke liye
     
     # Text ko lines mein todna (Wrapping)
     for word in words:
@@ -87,7 +87,8 @@ def draw_colored_text_centered(draw, text, font, canvas_width, top_y, bottom_y):
 
 def create_video_with_ffmpeg(text, image_url):
     print("Downloading image...")
-    response = requests.get(image_url, headers=HEADERS)
+    # Timeout add kiya taaki network delay par script fase nahi (fast execution)
+    response = requests.get(image_url, headers=HEADERS, timeout=10)
     
     if response.status_code != 200:
         print("Image download failed!")
@@ -99,9 +100,9 @@ def create_video_with_ffmpeg(text, image_url):
     # 2. News Image ko load karna
     img = Image.open(BytesIO(response.content)).convert("RGB")
     
-    # 3. Image ko Upar ke hisse ke hisaab se resize karna (Upar shift karne ke liye target_height kam ki hai)
+    # 3. Image ko Upar ke hisse ke hisaab se resize karna
     target_width = 1080
-    target_height = 1150 # <-- Pehle 1350 tha, ab 1150 kiya taaki text aur UPAR se shuru ho
+    target_height = 1150 
     
     img_ratio = img.width / img.height
     target_ratio = target_width / target_height
@@ -115,7 +116,8 @@ def create_video_with_ffmpeg(text, image_url):
         offset = (img.height - new_height) // 2
         img = img.crop((0, offset, img.width, offset + new_height))
         
-    img = img.resize((target_width, target_height), Image.Resampling.LANCZOS)
+    # FAST OPTIMIZATION: LANCZOS ki jagah BILINEAR use kiya (Quality same dikhegi but process fast hoga)
+    img = img.resize((target_width, target_height), Image.Resampling.BILINEAR)
     
     # 4. News image ko black canvas par paste karna (Top par)
     canvas.paste(img, (0, 0))
@@ -123,7 +125,6 @@ def create_video_with_ffmpeg(text, image_url):
     # 5. Text Draw karna (Neeche wale black hisse mein)
     draw = ImageDraw.Draw(canvas)
     try:
-        # Font size 60 se sidha 120 (Bohot bada) kar diya hai
         font = ImageFont.truetype("impact.ttf", 120) 
     except IOError:
         try:
@@ -131,22 +132,24 @@ def create_video_with_ffmpeg(text, image_url):
         except IOError:
             font = ImageFont.load_default()
 
-    # Yahan top_y = 1150 kar diya hai, taaki text aur upar se adjust hona shuru kare
     draw_colored_text_centered(draw, text, font, canvas_width=1080, top_y=1150, bottom_y=1920)
     
     temp_image_path = "temp_frame.jpg"
-    canvas.save(temp_image_path)
+    canvas.save(temp_image_path, quality=85) # Quality slightly compress ki speed ke liye
     
-    # 6. FFmpeg se 6 second ka video banana
-    print("Generating video using FFmpeg...")
+    # 6. FFmpeg se 6 second ka video banana (Super Fast Mode)
+    print("Generating video using FFmpeg (Fast Mode)...")
     video_path = "politics_short.mp4"
     
+    # FAST OPTIMIZATION: -preset ultrafast aur -tune stillimage lagaya gaya hai
     ffmpeg_cmd = [
         "ffmpeg", "-y", 
         "-loop", "1", 
         "-framerate", "24", 
         "-i", temp_image_path,
         "-c:v", "libx264", 
+        "-preset", "ultrafast",  # <-- Video rendering seconds me complete karega
+        "-tune", "stillimage",   # <-- Static image ke liye encoding ko optimize karega
         "-t", "6", 
         "-pix_fmt", "yuv420p", 
         video_path
@@ -165,7 +168,8 @@ def send_to_webhook(video_path, text):
     with open(video_path, 'rb') as f:
         payload = {"content": f"New Viral Short: {text}"}
         files = {"file": (video_path, f, "video/mp4")}
-        response = requests.post(WEBHOOK_URL, data=payload, files=files)
+        # Timeout added for safety
+        response = requests.post(WEBHOOK_URL, data=payload, files=files, timeout=30)
         
     if response.status_code in [200, 204]:
         print("Success! Video sent.")
