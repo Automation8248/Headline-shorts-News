@@ -31,8 +31,8 @@ def get_latest_news():
             
     return None, None
 
-def draw_colored_text_centered(draw, text, font, canvas_width, start_y):
-    """Bina AI ke kuch words ko highlight karta hai aur center align karta hai (Aapki image ki tarah)"""
+def draw_colored_text_centered(draw, text, font, canvas_width, top_y, bottom_y):
+    """Text ko wrap karke Shorts ke bache hue black box mein vertically center align karta hai"""
     words = text.split()
     
     # Logic: Sabse lambe 3 words nikal lo taaki unko highlight (Orange) kar sakein
@@ -43,7 +43,7 @@ def draw_colored_text_centered(draw, text, font, canvas_width, start_y):
     lines = []
     current_line = []
     current_line_width = 0
-    max_line_width = 950 # Side padding ke liye
+    max_line_width = 950 # Side padding ke liye (1080 canvas me margins safe rahenge)
     
     # Text ko lines mein todna (Wrapping)
     for word in words:
@@ -65,19 +65,27 @@ def draw_colored_text_centered(draw, text, font, canvas_width, start_y):
     if current_line:
         lines.append(current_line)
 
-    # Ab har line ko center mein draw karna
+    # === DYNAMIC VERTICAL CENTERING LOGIC ===
+    # Font height calculate karke usko exact center me place karna
+    font_size = getattr(font, 'size', 65)
+    line_height = font_size * 1.3
+    total_text_height = len(lines) * line_height
+    
+    available_height = bottom_y - top_y
+    # Yahan text automatically box ke beech mein set ho jayega
+    start_y = top_y + (available_height - total_text_height) / 2 
+
+    # Ab har line ko horizontally center mein draw karna
     y = start_y
     for line in lines:
-        # Line ki total width calculate karna (taaki center kar sakein)
         line_width = sum(font.getlength(w) for w, _ in line) + space_width * (len(line) - 1)
         x = (canvas_width - line_width) / 2 # Center X position
         
         for word, is_highlight in line:
-            # Highlight color set karna (Orange jaisa image mein hai)
             color = "#FFA500" if is_highlight else "white"
             draw.text((x, y), word, font=font, fill=color)
             x += font.getlength(word) + space_width
-        y += font.size * 1.3 # Agli line ke liye gap
+        y += line_height # Agli line ke liye gap
 
 def create_video_with_ffmpeg(text, image_url):
     print("Downloading image...")
@@ -117,16 +125,17 @@ def create_video_with_ffmpeg(text, image_url):
     # 5. Text Draw karna (Neeche wale black hisse mein)
     draw = ImageDraw.Draw(canvas)
     try:
-        # Impact ya Arial Bold font ka use karne ki koshish karega (Meme look ke liye)
-        font = ImageFont.truetype("impact.ttf", 65)
+        # Impact ya Arial Bold font ka use karne ki koshish karega
+        font = ImageFont.truetype("impact.ttf", 60) # Text width balance ke liye size 65 se thoda 60 kiya
     except IOError:
         try:
-            font = ImageFont.truetype("arialbd.ttf", 65)
+            font = ImageFont.truetype("arialbd.ttf", 60)
         except IOError:
             font = ImageFont.load_default()
 
-    # Text ko canvas par Y=1420 position (Image ke thoda niche) se draw karna shuru karega
-    draw_colored_text_centered(draw, text, font, canvas_width=1080, start_y=1420)
+    # Yahan top_y = 1350 aur bottom_y = 1920 pass kiya gaya hai
+    # Taki text in dono limits ke perfectly beech (center) me adjust ho.
+    draw_colored_text_centered(draw, text, font, canvas_width=1080, top_y=1350, bottom_y=1920)
     
     temp_image_path = "temp_frame.jpg"
     canvas.save(temp_image_path)
