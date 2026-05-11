@@ -43,7 +43,7 @@ def draw_colored_text_centered(draw, text, font, canvas_width, top_y, bottom_y):
     lines = []
     current_line = []
     current_line_width = 0
-    max_line_width = 950 # Side padding ke liye (1080 canvas me margins safe rahenge)
+    max_line_width = 980 # Side padding ke liye (Bade text ke liye thoda space adjust kiya)
     
     # Text ko lines mein todna (Wrapping)
     for word in words:
@@ -66,13 +66,11 @@ def draw_colored_text_centered(draw, text, font, canvas_width, top_y, bottom_y):
         lines.append(current_line)
 
     # === DYNAMIC VERTICAL CENTERING LOGIC ===
-    # Font height calculate karke usko exact center me place karna
-    font_size = getattr(font, 'size', 65)
+    font_size = getattr(font, 'size', 120)
     line_height = font_size * 1.3
     total_text_height = len(lines) * line_height
     
     available_height = bottom_y - top_y
-    # Yahan text automatically box ke beech mein set ho jayega
     start_y = top_y + (available_height - total_text_height) / 2 
 
     # Ab har line ko horizontally center mein draw karna
@@ -101,9 +99,9 @@ def create_video_with_ffmpeg(text, image_url):
     # 2. News Image ko load karna
     img = Image.open(BytesIO(response.content)).convert("RGB")
     
-    # 3. Image ko Upar ke hisse (Top 70%) ke hisaab se resize karna
+    # 3. Image ko Upar ke hisse ke hisaab se resize karna (Upar shift karne ke liye target_height kam ki hai)
     target_width = 1080
-    target_height = 1350 # Upar ka hissa image ke liye
+    target_height = 1150 # <-- Pehle 1350 tha, ab 1150 kiya taaki text aur UPAR se shuru ho
     
     img_ratio = img.width / img.height
     target_ratio = target_width / target_height
@@ -125,17 +123,16 @@ def create_video_with_ffmpeg(text, image_url):
     # 5. Text Draw karna (Neeche wale black hisse mein)
     draw = ImageDraw.Draw(canvas)
     try:
-        # Impact ya Arial Bold font ka use karne ki koshish karega
-        font = ImageFont.truetype("impact.ttf", 60) # Text width balance ke liye size 65 se thoda 60 kiya
+        # Font size 60 se sidha 120 (Bohot bada) kar diya hai
+        font = ImageFont.truetype("impact.ttf", 120) 
     except IOError:
         try:
-            font = ImageFont.truetype("arialbd.ttf", 60)
+            font = ImageFont.truetype("arialbd.ttf", 120)
         except IOError:
             font = ImageFont.load_default()
 
-    # Yahan top_y = 1350 aur bottom_y = 1920 pass kiya gaya hai
-    # Taki text in dono limits ke perfectly beech (center) me adjust ho.
-    draw_colored_text_centered(draw, text, font, canvas_width=1080, top_y=1350, bottom_y=1920)
+    # Yahan top_y = 1150 kar diya hai, taaki text aur upar se adjust hona shuru kare
+    draw_colored_text_centered(draw, text, font, canvas_width=1080, top_y=1150, bottom_y=1920)
     
     temp_image_path = "temp_frame.jpg"
     canvas.save(temp_image_path)
