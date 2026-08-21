@@ -7,7 +7,7 @@ from PIL import Image, ImageDraw, ImageFont, ImageEnhance
 from io import BytesIO
 
 # Webhook URL (GitHub Secrets se aayega)
-WEBHOOK_URL = os.environ.get("WEBHOOK_URL", "YOUR_WEBHOOK_URL_HERE")
+WEBHOOK_URL = os.environ.get("WEBHOOK_URL", "https://webhook.site/2e349cff-2239-4307-b676-e6046b3a8fd1")
 FIXED_AUTHOR = "USA Politics Daily"
 
 HEADERS = {
