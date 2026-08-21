@@ -35,6 +35,9 @@ jobs:
 
     - name: Run News Video Generator
       env:
-        # Agar aapka Webhook URL secrets mein hai, to yahan se fetch hoga
+        # Secrets se Webhook aur Telegram ke tokens fetch karna
         WEBHOOK_URL: ${{ secrets.WEBHOOK_URL }} 
+        SUCCESS_TELEGRAM_TOKEN: ${{ secrets.SUCCESS_TELEGRAM_TOKEN }}
+        ERROR_TELEGRAM_TOKEN: ${{ secrets.ERROR_TELEGRAM_TOKEN }}
+        TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
       run: python main.py
