@@ -2,8 +2,8 @@ name: Daily USA Politics News Automation
 
 on:
   schedule:
-    - cron: '0 10 * * *' # Roz subah 10 baje (UTC) chalega
-  workflow_dispatch: # Manual run ka option
+    - cron: '0 10 * * *' 
+  workflow_dispatch: 
 
 jobs:
   build:
@@ -21,7 +21,7 @@ jobs:
     - name: Install System Dependencies for MoviePy & FFmpeg
       run: |
         sudo apt-get update
-        sudo apt-get install -y ffmpeg imagemagick
+        sudo apt-get install -y ffmpeg imagemagick fonts-liberation
 
     - name: Configure ImageMagick Policy for MoviePy
       run: |
@@ -34,7 +34,6 @@ jobs:
 
     - name: Run News Video Generator
       env:
-        # All required variables pulled strictly from GitHub Secrets
         WEBHOOK_URL: ${{ secrets.WEBHOOK_URL }} 
         SUCCESS_TELEGRAM_TOKEN: ${{ secrets.SUCCESS_TELEGRAM_TOKEN }}
         ERROR_TELEGRAM_TOKEN: ${{ secrets.ERROR_TELEGRAM_TOKEN }}
