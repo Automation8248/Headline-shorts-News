@@ -148,6 +148,7 @@ def get_random_bgm():
     return os.path.join(BGM_DIR, random.choice(files))
 
 # --- AUDIO & EXACT TIMED SUBTITLES (PIL + NUMPY LOGIC) ---
+# --- AUDIO & EXACT TIMED SUBTITLES (PIL + NUMPY LOGIC - FIXED FONT) ---
 async def generate_audio_and_subs(text, index):
     audio_file = f"temp_audio_{index}.mp3"
     communicate = edge_tts.Communicate(text, "en-US-AriaNeural")
@@ -165,16 +166,31 @@ async def generate_audio_and_subs(text, index):
 
 def create_caption_clips(subs_data, max_width=900):
     """
-    Uses PIL to draw text exactly as requested, bypassing ImageMagick.
-    Groups words into chunks of 3 and exact aligns them with TTS audio timing.
+    Uses PIL to draw text with robust font loading so captions are never invisible.
     """
-    try:
-        font = ImageFont.truetype('/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf', 75)
-    except IOError:
+    # Bulletproof font loader for Windows and Linux (GitHub Actions)
+    font = None
+    font_paths = [
+        "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", # Linux / GitHub Actions
+        "/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf", # Linux alternative
+        "C:\\Windows\\Fonts\\arialbd.ttf", # Windows Bold Arial
+        "C:\\Windows\\Fonts\\arial.ttf"    # Windows Normal Arial
+    ]
+    
+    for path in font_paths:
+        if os.path.exists(path):
+            try:
+                font = ImageFont.truetype(path, 75)
+                break
+            except:
+                continue
+                
+    # Agar system mein koi font na mile, toh Pillow ka default use karega (with size if supported)
+    if font is None:
         try:
-            font = ImageFont.truetype("arialbd.ttf", 75)
-        except IOError:
-            font = ImageFont.load_default()
+            font = ImageFont.load_default(size=75)
+        except TypeError:
+            font = ImageFont.load_default() # Older Pillow fallback
 
     chunk_size = 3
     chunks_data = []
@@ -182,6 +198,8 @@ def create_caption_clips(subs_data, max_width=900):
     for i in range(0, len(subs_data), chunk_size):
         chunk = subs_data[i:i+chunk_size]
         combined_text = " ".join([w["text"] for w in chunk])
+        if not combined_text.strip():
+            continue
         start_t = chunk[0]["start"]
         end_t = chunk[-1]["end"]
         chunks_data.append({"text": combined_text, "start": start_t, "end": end_t})
@@ -196,25 +214,31 @@ def create_caption_clips(subs_data, max_width=900):
         try:
             bbox = draw.textbbox((0, 0), chunk["text"], font=font)
             w = bbox[2] - bbox[0]
+            h = bbox[3] - bbox[1]
         except AttributeError:
             w, h = draw.textsize(chunk["text"], font=font)
             
-        x, y = (max_width - w) / 2, 20
+        x, y = (max_width - w) / 2, (150 - h) / 2
         
+        # Black outline (stroke) taaki text saaf chamke
         stroke = 4
         for dx in [-stroke, 0, stroke]:
             for dy in [-stroke, 0, stroke]:
                 draw.text((x+dx, y+dy), chunk["text"], font=font, fill='black')
                 
+        # Alternating color (White / Yellow)
         current_color = colors[i % 2]
         draw.text((x, y), chunk["text"], font=font, fill=current_color)
         
         img_np = np.array(img)
         chunk_duration = chunk["end"] - chunk["start"]
-        
+        if chunk_duration <= 0:
+            chunk_duration = 0.5 # Safety check
+            
         txt_clip = ImageClip(img_np[:, :, :3]).set_duration(chunk_duration)
         mask = ImageClip(img_np[:, :, 3] / 255.0, ismask=True).set_duration(chunk_duration)
         
+        # Position at y=1400 (Center ke niche)
         txt_clip = txt_clip.set_mask(mask).set_position(('center', 1400)).set_start(chunk["start"])
         clips.append(txt_clip)
         
