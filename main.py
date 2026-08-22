@@ -284,7 +284,7 @@ def create_combined_video(news_items, output_path="politics_viral_short.mp4"):
             bgm = bgm.subclip(random_start_time, bgm.duration)
             print(f"🎵 BGM randomly started from: {random_start_time} seconds.")
             
-        bgm = bgm.fx(volumex, 0.25)
+        bgm = bgm.fx(volumex, 0.15)
         bgm_looped = audio_loop(bgm, duration=final_video.duration)
         final_mixed_audio = CompositeAudioClip([final_video.audio, bgm_looped])
         final_video = final_video.set_audio(final_mixed_audio)
