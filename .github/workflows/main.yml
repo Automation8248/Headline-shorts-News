@@ -34,8 +34,7 @@ jobs:
 
     - name: Run News Video Generator
       env:
-        # Secrets map kiye gaye hain. 
-        # Agar repo mein secrets nahi hain, to python script dummy tokens use karega.
+        # All required variables pulled strictly from GitHub Secrets
         WEBHOOK_URL: ${{ secrets.WEBHOOK_URL }} 
         SUCCESS_TELEGRAM_TOKEN: ${{ secrets.SUCCESS_TELEGRAM_TOKEN }}
         ERROR_TELEGRAM_TOKEN: ${{ secrets.ERROR_TELEGRAM_TOKEN }}
