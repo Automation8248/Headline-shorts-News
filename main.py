@@ -274,18 +274,18 @@ def create_combined_video(news_items, output_path="politics_viral_short.mp4"):
     final_video = concatenate_videoclips(clips, method="compose")
     
     # --- BGM Application (Random Start, Cut & Loop Logic) ---
+    # --- BGM Application (Start from 0s, Cut & Loop Logic) ---
     try:
         bg_music_path = get_random_bgm()
         bgm = AudioFileClip(bg_music_path)
         
-        if bgm.duration > 5.0:
-            max_start = bgm.duration - 3.0
-            random_start_time = round(random.uniform(0, max_start), 2)
-            bgm = bgm.subclip(random_start_time, bgm.duration)
-            print(f"🎵 BGM randomly started from: {random_start_time} seconds.")
-            
-        bgm = bgm.fx(volumex, 0.15)
+        # Volume set karo (25%)
+        bgm = bgm.fx(volumex, 0.25)
+        
+        # audio_loop automatically 0 seconds se shuru karega aur video length tak cut/repeat karega
         bgm_looped = audio_loop(bgm, duration=final_video.duration)
+        
+        # Voiceover aur BGM ko mix karo
         final_mixed_audio = CompositeAudioClip([final_video.audio, bgm_looped])
         final_video = final_video.set_audio(final_mixed_audio)
         
