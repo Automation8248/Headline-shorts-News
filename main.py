@@ -7,10 +7,11 @@ import nest_asyncio
 import edge_tts
 import json
 import uuid
+import numpy as np
 from datetime import datetime
-from PIL import Image, ImageEnhance
+from PIL import Image, ImageDraw, ImageFont, ImageEnhance
 from io import BytesIO
-from moviepy.editor import ImageClip, AudioFileClip, concatenate_videoclips, CompositeAudioClip, CompositeVideoClip, TextClip, ColorClip
+from moviepy.editor import ImageClip, AudioFileClip, concatenate_videoclips, CompositeAudioClip, CompositeVideoClip, ColorClip
 from moviepy.audio.fx.all import volumex, audio_loop
 
 nest_asyncio.apply()
@@ -141,10 +142,9 @@ def get_random_item_with_cooling(filepath, history_dict, item_type):
 # --- OPENVERSE BULK DOWNLOADER (100+ FILES) ---
 def ensure_bgm_downloaded():
     existing = [f for f in os.listdir(BGM_DIR) if f.endswith('.mp3')]
-    if len(existing) >= 50: return # Agar pehle se kafi BGM hain to baar-baar download nahi karega
+    if len(existing) >= 50: return 
 
     print("Fetching 100+ Royalty-Free BGM in bulk...")
-    # Limit set to 100 tracks in one API call
     search_url = "https://api.jamendo.com/v3.0/tracks/?client_id=56d30c95&format=json&limit=100&tags=suspense,background"
     try:
         res = requests.get(search_url, timeout=30)
@@ -165,17 +165,15 @@ def get_random_bgm():
     if not files: raise Exception("No BGM found in local folder.")
     return os.path.join(BGM_DIR, random.choice(files))
 
-# --- AUDIO & EXACT TIMED SUBTITLES (YELLOW) ---
+# --- AUDIO & EXACT TIMED SUBTITLES (PIL + NUMPY LOGIC) ---
 async def generate_audio_and_subs(text, index):
     audio_file = f"temp_audio_{index}.mp3"
-    # en-US-AriaNeural is a professional female news anchor voice
     communicate = edge_tts.Communicate(text, "en-US-AriaNeural")
     subs_data = [] 
     with open(audio_file, "wb") as file:
         async for chunk in communicate.stream():
             if chunk["type"] == "audio": file.write(chunk["data"])
             elif chunk["type"] == "WordBoundary":
-                # Convert timestamps to seconds accurately
                 subs_data.append({
                     "start": chunk["offset"] / 10_000_000.0,
                     "end": (chunk["offset"] + chunk["duration"]) / 10_000_000.0,
@@ -183,28 +181,70 @@ async def generate_audio_and_subs(text, index):
                 })
     return audio_file, subs_data
 
-def create_subtitles(subs_data, canvas_height):
-    subs = []
-    text_y_position = (canvas_height // 2) + 550 
+def create_caption_clips(subs_data, max_width=900):
+    """
+    Uses PIL to draw text exactly as requested, bypassing ImageMagick.
+    Groups words into chunks of 3 and exact aligns them with TTS audio timing.
+    """
+    # Safe font loading mechanism for all OS
     try:
-        for sub in subs_data:
-            # Yellow text with black border (stroke) for better visibility
-            txt_clip = TextClip(
-                sub["text"].strip(), 
-                fontsize=85, 
-                color='yellow', 
-                font='Arial-Bold',
-                stroke_color='black',
-                stroke_width=2,
-                method='caption',
-                align='center',
-                size=(900, None) # Prevents text from going off-screen
-            )
-            txt_clip = txt_clip.set_position(('center', text_y_position)).set_start(sub["start"]).set_end(sub["end"])
-            subs.append(txt_clip)
-    except Exception as e: 
-        print(f"Subtitle rendering issue: {e}")
-    return subs
+        font = ImageFont.truetype('/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf', 75)
+    except IOError:
+        try:
+            font = ImageFont.truetype("arialbd.ttf", 75)
+        except IOError:
+            font = ImageFont.load_default()
+
+    chunk_size = 3
+    chunks_data = []
+    
+    # 1. Group words into chunks of 3
+    for i in range(0, len(subs_data), chunk_size):
+        chunk = subs_data[i:i+chunk_size]
+        combined_text = " ".join([w["text"] for w in chunk])
+        start_t = chunk[0]["start"]
+        end_t = chunk[-1]["end"]
+        chunks_data.append({"text": combined_text, "start": start_t, "end": end_t})
+        
+    clips = []
+    colors = ['white', 'yellow']
+    
+    # 2. Draw each chunk using PIL and NumPy
+    for i, chunk in enumerate(chunks_data):
+        img = Image.new('RGBA', (max_width, 150), (0, 0, 0, 0))
+        draw = ImageDraw.Draw(img)
+        
+        # PIL text bounding box compatible with all versions
+        try:
+            bbox = draw.textbbox((0, 0), chunk["text"], font=font)
+            w = bbox[2] - bbox[0]
+        except AttributeError:
+            w, h = draw.textsize(chunk["text"], font=font)
+            
+        x, y = (max_width - w) / 2, 20
+        
+        # Black outline banata hai taki text chamke
+        stroke = 4
+        for dx in [-stroke, 0, stroke]:
+            for dy in [-stroke, 0, stroke]:
+                draw.text((x+dx, y+dy), chunk["text"], font=font, fill='black')
+                
+        # Fill alternating color (White or Yellow)
+        current_color = colors[i % 2]
+        draw.text((x, y), chunk["text"], font=font, fill=current_color)
+        
+        # Convert to MoviePy ImageClip using NumPy
+        img_np = np.array(img)
+        chunk_duration = chunk["end"] - chunk["start"]
+        
+        txt_clip = ImageClip(img_np[:, :, :3]).set_duration(chunk_duration)
+        mask = ImageClip(img_np[:, :, 3] / 255.0, ismask=True).set_duration(chunk_duration)
+        
+        # '1400' = Center ke niche placement
+        txt_clip = txt_clip.set_mask(mask).set_position(('center', 1400)).set_start(chunk["start"])
+        clips.append(txt_clip)
+        
+    return clips
 
 # --- IMAGE & NEWS ---
 def get_latest_news():
@@ -248,10 +288,9 @@ def create_combined_video(news_items, output_path="politics_viral_short.mp4"):
         video_with_img = create_square_image_clip(img_url, audio_clip.duration + 0.5)
         if not video_with_img: continue
         
-        # Word by word subtitle apply
-        subs = create_subtitles(subs_data, 1920)
+        # Call the new PIL-based subtitle function
+        subs = create_caption_clips(subs_data, 900)
         
-        # Merge Video, Subtitles and Audio
         if subs:
             video_with_text = CompositeVideoClip([video_with_img] + subs).set_audio(audio_clip)
         else:
@@ -262,7 +301,6 @@ def create_combined_video(news_items, output_path="politics_viral_short.mp4"):
 
     final_video = concatenate_videoclips(clips, method="compose")
     
-    # BGM Application
     try:
         ensure_bgm_downloaded()
         bg_music_path = get_random_bgm()
@@ -279,9 +317,6 @@ def create_combined_video(news_items, output_path="politics_viral_short.mp4"):
 
 # --- MULTI-SERVER FILE UPLOAD FALLBACK LOGIC ---
 def send_to_fallback_servers(video_path):
-    """
-    Tries 20 distinct upload servers. Moves to the next if one fails.
-    """
     UPLOAD_SERVERS = [
         {"name": "Catbox", "url": "https://catbox.moe/user/api.php", "data": {"reqtype": "fileupload"}, "file_field": "fileToUpload"},
         {"name": "Litterbox", "url": "https://litterbox.catbox.moe/resources/internals/api.php", "data": {"reqtype": "fileupload", "time": "72h"}, "file_field": "fileToUpload"},
@@ -324,32 +359,4 @@ def send_to_fallback_servers(video_path):
                     return link
             print(f"{server['name']} failed with status {response.status_code}. Trying next...")
         except Exception as e:
-            print(f"{server['name']} upload error: {e}. Trying next...")
-
-    raise Exception("All 20 file upload servers failed.")
-
-def post_to_webhook(title, hashtag, video_url):
-    payload = {"title": title, "hashtags": hashtag, "video_url": video_url}
-    response = requests.post(WEBHOOK_URL, json=payload, timeout=30)
-    if response.status_code not in [200, 204]:
-        raise Exception(f"Webhook failed with status {response.status_code}")
-
-if __name__ == "__main__":
-    try:
-        history = load_history()
-        title = get_random_item_with_cooling(TITLE_FILE, history['titles'], "Title")
-        hashtag = get_random_item_with_cooling(HASHTAG_FILE, history['hashtags'], "Hashtag")
         
-        news_items = get_latest_news()
-        if len(news_items) < 3: raise Exception("Not enough news items found.")
-            
-        video_file = create_combined_video(news_items)
-        if os.path.exists(video_file):
-            uploaded_link = send_to_fallback_servers(video_file)
-            post_to_webhook(title, hashtag, uploaded_link)
-            
-            save_history(history)
-            log_success(uploaded_link, title, hashtag)
-            
-    except Exception as e:
-        log_error(str(e))
