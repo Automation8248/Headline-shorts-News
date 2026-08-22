@@ -24,7 +24,6 @@ jobs:
         sudo apt-get install -y ffmpeg imagemagick
 
     - name: Configure ImageMagick Policy for MoviePy
-      # MoviePy ko text render karne ke liye ImageMagick ki permissions chahiye hoti hain
       run: |
         sudo sed -i 's/<policy domain="path" rights="none" pattern="@\*"/<policy domain="path" rights="read|write" pattern="@\*"/' /etc/ImageMagick-6/policy.xml
 
@@ -35,7 +34,8 @@ jobs:
 
     - name: Run News Video Generator
       env:
-        # Secrets se Webhook aur Telegram ke tokens fetch karna
+        # Secrets map kiye gaye hain. 
+        # Agar repo mein secrets nahi hain, to python script dummy tokens use karega.
         WEBHOOK_URL: ${{ secrets.WEBHOOK_URL }} 
         SUCCESS_TELEGRAM_TOKEN: ${{ secrets.SUCCESS_TELEGRAM_TOKEN }}
         ERROR_TELEGRAM_TOKEN: ${{ secrets.ERROR_TELEGRAM_TOKEN }}
