@@ -322,6 +322,36 @@ def create_caption_clips(text, subs_data, audio_duration, max_width=1040):
         
     return clips
 
+# --- IMAGE & NEWS ---
+def get_latest_news():
+    feed = feedparser.parse("https://news.yahoo.com/rss/politics")
+    news_list = []
+    for entry in feed.entries:
+        if len(news_list) >= 3: break
+        title = entry.title.replace('#', '').replace('*', '').strip()
+        img = entry.media_content[0]['url'] if 'media_content' in entry else None
+        if img: news_list.append((title, img))
+    return news_list
+
+def create_square_image_clip(image_url, duration):
+    headers = {"User-Agent": random.choice(USER_AGENTS)}
+    response = requests.get(image_url, headers=headers, timeout=10)
+    if response.status_code != 200: return None
+
+    img = Image.open(BytesIO(response.content)).convert("RGB")
+    size = min(img.width, img.height)
+    offset_x = (img.width - size) // 2
+    offset_y = (img.height - size) // 2
+    img = img.crop((offset_x, offset_y, offset_x + size, offset_y + size))
+    img = img.resize((1000, 1000), Image.Resampling.BILINEAR)
+    
+    img_path = f"temp_sq_{uuid.uuid4().hex[:4]}.jpg"
+    img.save(img_path, quality=90)
+    
+    bg = ColorClip(size=(1080, 1920), color=(0,0,0)).set_duration(duration)
+    img_clip = ImageClip(img_path).set_duration(duration).set_position("center")
+    
+    return CompositeVideoClip([bg, img_clip])
 
 # --- VIDEO ASSEMBLY & CLIP MERGING (COMPOSITE) ---
 def create_combined_video(news_items, output_path="politics_viral_short.mp4"):
