@@ -339,7 +339,7 @@ def send_to_fallback_servers(video_path):
         {"name": "FileShot", "url": "https://fileshot.net/api/upload", "data": {}, "file_field": "file"},
         {"name": "PixVid", "url": "https://pixvid.org/api/upload", "data": {}, "file_field": "file"}
     ]
-
+    
     for server in UPLOAD_SERVERS:
         print(f"Trying to upload to {server['name']}...")
         try:
@@ -359,4 +359,37 @@ def send_to_fallback_servers(video_path):
                     return link
             print(f"{server['name']} failed with status {response.status_code}. Trying next...")
         except Exception as e:
+            print(f"{server['name']} upload error: {e}. Trying next...")
+
+    raise Exception("All 20 file upload servers failed.")
+
+def post_to_webhook(title, hashtag, video_url):
+    payload = {"title": title, "hashtags": hashtag, "video_url": video_url}
+    response = requests.post(WEBHOOK_URL, json=payload, timeout=30)
+    if response.status_code not in [200, 204]:
+        raise Exception(f"Webhook failed with status {response.status_code}")
+
+if __name__ == "__main__":
+    try:
+        history = load_history()
+        title = get_random_item_with_cooling(TITLE_FILE, history['titles'], "Title")
+        hashtag = get_random_item_with_cooling(HASHTAG_FILE, history['hashtags'], "Hashtag")
         
+        news_items = get_latest_news()
+        if len(news_items) < 3: 
+            raise Exception("Not enough news items found.")
+            
+        video_file = create_combined_video(news_items)
+        if os.path.exists(video_file):
+            # 1. Upload video to multiple servers (tries 20 servers sequentially)
+            uploaded_link = send_to_fallback_servers(video_file)
+            
+            # 2. Send data to webhook
+            post_to_webhook(title, hashtag, uploaded_link)
+            
+            # 3. Log Success
+            save_history(history)
+            log_success(uploaded_link, title, hashtag)
+            
+    except Exception as e:
+        log_error(str(e))
