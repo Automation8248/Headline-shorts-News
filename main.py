@@ -139,30 +139,12 @@ def get_random_item_with_cooling(filepath, history_dict, item_type):
     history_dict[selected] = now.isoformat()
     return selected
 
-# --- OPENVERSE BULK DOWNLOADER (100+ FILES) ---
-def ensure_bgm_downloaded():
-    existing = [f for f in os.listdir(BGM_DIR) if f.endswith('.mp3')]
-    if len(existing) >= 50: return 
-
-    print("Fetching 100+ Royalty-Free BGM in bulk...")
-    search_url = "https://api.jamendo.com/v3.0/tracks/?client_id=56d30c95&format=json&limit=100&tags=suspense,background"
-    try:
-        res = requests.get(search_url, timeout=30)
-        if res.status_code == 200:
-            tracks = res.json().get("results", [])
-            for track in tracks:
-                audio_url = track.get("audiodownload") or track.get("audio")
-                if audio_url:
-                    r = requests.get(audio_url, stream=True)
-                    if r.status_code == 200:
-                        file_path = os.path.join(BGM_DIR, f"bgm_{uuid.uuid4().hex[:8]}.mp3")
-                        with open(file_path, 'wb') as f: f.write(r.content)
-    except Exception as e:
-        print(f"Bulk download failed: {e}")
-
+# --- LOCAL BACKGROUND MUSIC LOGIC ---
 def get_random_bgm():
+    """Sirf local 'bg_music' folder se MP3 select karega. Koi download nahi."""
     files = [f for f in os.listdir(BGM_DIR) if f.endswith('.mp3')]
-    if not files: raise Exception("No BGM found in local folder.")
+    if not files: 
+        raise Exception("❌ bg_music folder khali hai! Kripya manually apni MP3 files add karein.")
     return os.path.join(BGM_DIR, random.choice(files))
 
 # --- AUDIO & EXACT TIMED SUBTITLES (PIL + NUMPY LOGIC) ---
@@ -186,7 +168,6 @@ def create_caption_clips(subs_data, max_width=900):
     Uses PIL to draw text exactly as requested, bypassing ImageMagick.
     Groups words into chunks of 3 and exact aligns them with TTS audio timing.
     """
-    # Safe font loading mechanism for all OS
     try:
         font = ImageFont.truetype('/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf', 75)
     except IOError:
@@ -198,7 +179,6 @@ def create_caption_clips(subs_data, max_width=900):
     chunk_size = 3
     chunks_data = []
     
-    # 1. Group words into chunks of 3
     for i in range(0, len(subs_data), chunk_size):
         chunk = subs_data[i:i+chunk_size]
         combined_text = " ".join([w["text"] for w in chunk])
@@ -209,12 +189,10 @@ def create_caption_clips(subs_data, max_width=900):
     clips = []
     colors = ['white', 'yellow']
     
-    # 2. Draw each chunk using PIL and NumPy
     for i, chunk in enumerate(chunks_data):
         img = Image.new('RGBA', (max_width, 150), (0, 0, 0, 0))
         draw = ImageDraw.Draw(img)
         
-        # PIL text bounding box compatible with all versions
         try:
             bbox = draw.textbbox((0, 0), chunk["text"], font=font)
             w = bbox[2] - bbox[0]
@@ -223,24 +201,20 @@ def create_caption_clips(subs_data, max_width=900):
             
         x, y = (max_width - w) / 2, 20
         
-        # Black outline banata hai taki text chamke
         stroke = 4
         for dx in [-stroke, 0, stroke]:
             for dy in [-stroke, 0, stroke]:
                 draw.text((x+dx, y+dy), chunk["text"], font=font, fill='black')
                 
-        # Fill alternating color (White or Yellow)
         current_color = colors[i % 2]
         draw.text((x, y), chunk["text"], font=font, fill=current_color)
         
-        # Convert to MoviePy ImageClip using NumPy
         img_np = np.array(img)
         chunk_duration = chunk["end"] - chunk["start"]
         
         txt_clip = ImageClip(img_np[:, :, :3]).set_duration(chunk_duration)
         mask = ImageClip(img_np[:, :, 3] / 255.0, ismask=True).set_duration(chunk_duration)
         
-        # '1400' = Center ke niche placement
         txt_clip = txt_clip.set_mask(mask).set_position(('center', 1400)).set_start(chunk["start"])
         clips.append(txt_clip)
         
@@ -282,13 +256,11 @@ def create_combined_video(news_items, output_path="politics_viral_short.mp4"):
     clips = []
     for i, (text, img_url) in enumerate(news_items):
         audio_path, subs_data = asyncio.run(generate_audio_and_subs(text, i))
-        # Voiceover volume at 75%
         audio_clip = AudioFileClip(audio_path).fx(volumex, 0.75) 
         
         video_with_img = create_square_image_clip(img_url, audio_clip.duration + 0.5)
         if not video_with_img: continue
         
-        # Call the new PIL-based subtitle function
         subs = create_caption_clips(subs_data, 900)
         
         if subs:
@@ -301,14 +273,22 @@ def create_combined_video(news_items, output_path="politics_viral_short.mp4"):
 
     final_video = concatenate_videoclips(clips, method="compose")
     
+    # --- BGM Application (Random Start, Cut & Loop Logic) ---
     try:
-        ensure_bgm_downloaded()
         bg_music_path = get_random_bgm()
-        # Background music volume at 25%
-        bgm = AudioFileClip(bg_music_path).fx(volumex, 0.25)
+        bgm = AudioFileClip(bg_music_path)
+        
+        if bgm.duration > 5.0:
+            max_start = bgm.duration - 3.0
+            random_start_time = round(random.uniform(0, max_start), 2)
+            bgm = bgm.subclip(random_start_time, bgm.duration)
+            print(f"🎵 BGM randomly started from: {random_start_time} seconds.")
+            
+        bgm = bgm.fx(volumex, 0.25)
         bgm_looped = audio_loop(bgm, duration=final_video.duration)
         final_mixed_audio = CompositeAudioClip([final_video.audio, bgm_looped])
         final_video = final_video.set_audio(final_mixed_audio)
+        
     except Exception as e: 
         print(f"BGM mixing failed: {e}")
 
@@ -339,7 +319,7 @@ def send_to_fallback_servers(video_path):
         {"name": "FileShot", "url": "https://fileshot.net/api/upload", "data": {}, "file_field": "file"},
         {"name": "PixVid", "url": "https://pixvid.org/api/upload", "data": {}, "file_field": "file"}
     ]
-    
+
     for server in UPLOAD_SERVERS:
         print(f"Trying to upload to {server['name']}...")
         try:
@@ -381,13 +361,9 @@ if __name__ == "__main__":
             
         video_file = create_combined_video(news_items)
         if os.path.exists(video_file):
-            # 1. Upload video to multiple servers (tries 20 servers sequentially)
             uploaded_link = send_to_fallback_servers(video_file)
-            
-            # 2. Send data to webhook
             post_to_webhook(title, hashtag, uploaded_link)
             
-            # 3. Log Success
             save_history(history)
             log_success(uploaded_link, title, hashtag)
             
