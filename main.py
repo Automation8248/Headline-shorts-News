@@ -138,15 +138,16 @@ def get_random_item_with_cooling(filepath, history_dict, item_type):
     history_dict[selected] = now.isoformat()
     return selected
 
-# --- OPENVERSE BULK DOWNLOADER ---
+# --- OPENVERSE BULK DOWNLOADER (100+ FILES) ---
 def ensure_bgm_downloaded():
     existing = [f for f in os.listdir(BGM_DIR) if f.endswith('.mp3')]
-    if len(existing) >= 20: return
+    if len(existing) >= 50: return # Agar pehle se kafi BGM hain to baar-baar download nahi karega
 
-    print("Fetching Royalty-Free BGM (Openverse alternative) in bulk...")
-    search_url = "https://api.jamendo.com/v3.0/tracks/?client_id=56d30c95&format=json&limit=50&tags=suspense,background"
+    print("Fetching 100+ Royalty-Free BGM in bulk...")
+    # Limit set to 100 tracks in one API call
+    search_url = "https://api.jamendo.com/v3.0/tracks/?client_id=56d30c95&format=json&limit=100&tags=suspense,background"
     try:
-        res = requests.get(search_url, timeout=15)
+        res = requests.get(search_url, timeout=30)
         if res.status_code == 200:
             tracks = res.json().get("results", [])
             for track in tracks:
@@ -164,15 +165,17 @@ def get_random_bgm():
     if not files: raise Exception("No BGM found in local folder.")
     return os.path.join(BGM_DIR, random.choice(files))
 
-# --- AUDIO & SUBTITLES ---
+# --- AUDIO & EXACT TIMED SUBTITLES (YELLOW) ---
 async def generate_audio_and_subs(text, index):
     audio_file = f"temp_audio_{index}.mp3"
-    communicate = edge_tts.Communicate(text, "en-US-JennyNeural")
+    # en-US-AriaNeural is a professional female news anchor voice
+    communicate = edge_tts.Communicate(text, "en-US-AriaNeural")
     subs_data = [] 
     with open(audio_file, "wb") as file:
         async for chunk in communicate.stream():
             if chunk["type"] == "audio": file.write(chunk["data"])
             elif chunk["type"] == "WordBoundary":
+                # Convert timestamps to seconds accurately
                 subs_data.append({
                     "start": chunk["offset"] / 10_000_000.0,
                     "end": (chunk["offset"] + chunk["duration"]) / 10_000_000.0,
@@ -185,10 +188,22 @@ def create_subtitles(subs_data, canvas_height):
     text_y_position = (canvas_height // 2) + 550 
     try:
         for sub in subs_data:
-            txt_clip = TextClip(sub["text"].strip(), fontsize=70, color='yellow', font='Arial-Bold', bg_color='black')
+            # Yellow text with black border (stroke) for better visibility
+            txt_clip = TextClip(
+                sub["text"].strip(), 
+                fontsize=85, 
+                color='yellow', 
+                font='Arial-Bold',
+                stroke_color='black',
+                stroke_width=2,
+                method='caption',
+                align='center',
+                size=(900, None) # Prevents text from going off-screen
+            )
             txt_clip = txt_clip.set_position(('center', text_y_position)).set_start(sub["start"]).set_end(sub["end"])
             subs.append(txt_clip)
-    except Exception: pass
+    except Exception as e: 
+        print(f"Subtitle rendering issue: {e}")
     return subs
 
 # --- IMAGE & NEWS ---
@@ -227,24 +242,37 @@ def create_combined_video(news_items, output_path="politics_viral_short.mp4"):
     clips = []
     for i, (text, img_url) in enumerate(news_items):
         audio_path, subs_data = asyncio.run(generate_audio_and_subs(text, i))
+        # Voiceover volume at 75%
         audio_clip = AudioFileClip(audio_path).fx(volumex, 0.75) 
         
         video_with_img = create_square_image_clip(img_url, audio_clip.duration + 0.5)
         if not video_with_img: continue
         
+        # Word by word subtitle apply
         subs = create_subtitles(subs_data, 1920)
-        video_with_text = CompositeVideoClip([video_with_img] + subs).set_audio(audio_clip) if subs else video_with_img.set_audio(audio_clip)
+        
+        # Merge Video, Subtitles and Audio
+        if subs:
+            video_with_text = CompositeVideoClip([video_with_img] + subs).set_audio(audio_clip)
+        else:
+            video_with_text = video_with_img.set_audio(audio_clip)
+            
         if i > 0: video_with_text = video_with_text.crossfadein(0.5)
         clips.append(video_with_text)
 
     final_video = concatenate_videoclips(clips, method="compose")
     
+    # BGM Application
     try:
         ensure_bgm_downloaded()
         bg_music_path = get_random_bgm()
+        # Background music volume at 25%
         bgm = AudioFileClip(bg_music_path).fx(volumex, 0.25)
-        final_video = final_video.set_audio(CompositeAudioClip([final_video.audio, audio_loop(bgm, duration=final_video.duration)]))
-    except Exception: pass
+        bgm_looped = audio_loop(bgm, duration=final_video.duration)
+        final_mixed_audio = CompositeAudioClip([final_video.audio, bgm_looped])
+        final_video = final_video.set_audio(final_mixed_audio)
+    except Exception as e: 
+        print(f"BGM mixing failed: {e}")
 
     final_video.write_videofile(output_path, fps=24, codec="libx264", audio_codec="aac")
     return output_path
@@ -281,7 +309,6 @@ def send_to_fallback_servers(video_path):
         print(f"Trying to upload to {server['name']}...")
         try:
             with open(video_path, 'rb') as f:
-                # Add random user agent to the upload request as well to avoid blocks
                 headers = {"User-Agent": random.choice(USER_AGENTS)}
                 files = {server['file_field']: f}
                 response = requests.post(server['url'], data=server['data'], files=files, headers=headers, timeout=60)
@@ -318,13 +345,9 @@ if __name__ == "__main__":
             
         video_file = create_combined_video(news_items)
         if os.path.exists(video_file):
-            # 1. Upload video to multiple servers (tries 20 servers sequentially)
             uploaded_link = send_to_fallback_servers(video_file)
-            
-            # 2. Send data to webhook
             post_to_webhook(title, hashtag, uploaded_link)
             
-            # 3. Log Success
             save_history(history)
             log_success(uploaded_link, title, hashtag)
             
