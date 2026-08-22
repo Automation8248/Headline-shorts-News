@@ -220,75 +220,128 @@ def create_caption_clips(subs_data, max_width=900):
             
         x, y = (max_width - w) / 2, (150 - h) / 2
         
-        # Black outline (stroke) taaki text saaf chamke
+# --- AUDIO & BULLETPROOF CAPTION CLIPS CREATION ---
+async def generate_audio_and_subs(text, index):
+    audio_file = f"temp_audio_{index}.mp3"
+    communicate = edge_tts.Communicate(text, "en-US-AriaNeural")
+    subs_data = [] 
+    with open(audio_file, "wb") as file:
+        async for chunk in communicate.stream():
+            if chunk["type"] == "audio": 
+                file.write(chunk["data"])
+            elif chunk["type"] == "WordBoundary":
+                subs_data.append({
+                    "start": chunk["offset"] / 10_000_000.0,
+                    "end": (chunk["offset"] + chunk["duration"]) / 10_000_000.0,
+                    "text": chunk["text"]
+                })
+    return audio_file, subs_data
+
+def create_caption_clips(text, subs_data, audio_duration, max_width=1040):
+    font = None
+    font_paths = [
+        "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", 
+        "/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf", 
+        "C:\\Windows\\Fonts\\arialbd.ttf", 
+        "C:\\Windows\\Fonts\\arial.ttf"
+    ]
+    
+    for path in font_paths:
+        if os.path.exists(path):
+            try:
+                font = ImageFont.truetype(path, 65) 
+                break
+            except:
+                continue
+                
+    if font is None:
+        try: font = ImageFont.load_default(size=65)
+        except TypeError: font = ImageFont.load_default()
+
+    chunks_data = []
+    
+    # Fallback agar WordBoundary data na mile
+    if not subs_data:
+        words = text.split()
+        chunk_size = 3
+        text_chunks = [" ".join(words[i:i+chunk_size]) for i in range(0, len(words), chunk_size)]
+        time_per_chunk = audio_duration / max(len(text_chunks), 1)
+        
+        for i, chunk_text in enumerate(text_chunks):
+            start_t = i * time_per_chunk
+            end_t = (i + 1) * time_per_chunk
+            chunks_data.append({"text": chunk_text, "start": start_t, "end": end_t})
+    else:
+        chunk_size = 3
+        for i in range(0, len(subs_data), chunk_size):
+            chunk = subs_data[i:i+chunk_size]
+            combined_text = " ".join([w["text"] for w in chunk])
+            if not combined_text.strip(): continue
+            chunks_data.append({
+                "text": combined_text, 
+                "start": chunk[0]["start"], 
+                "end": chunk[-1]["end"]
+            })
+        
+    clips = []
+    colors = ['white', 'yellow'] # Alternating White and Yellow colors
+    
+    for i, chunk in enumerate(chunks_data):
+        img = Image.new('RGBA', (max_width, 200), (0, 0, 0, 0))
+        draw = ImageDraw.Draw(img)
+        
+        try:
+            bbox = draw.textbbox((0, 0), chunk["text"], font=font)
+            w = bbox[2] - bbox[0]
+            h = bbox[3] - bbox[1]
+        except AttributeError:
+            w, h = draw.textsize(chunk["text"], font=font)
+            
+        x, y = (max_width - w) / 2, (200 - h) / 2
+        
+        # Black outline (stroke) for better visibility
         stroke = 4
         for dx in [-stroke, 0, stroke]:
             for dy in [-stroke, 0, stroke]:
                 draw.text((x+dx, y+dy), chunk["text"], font=font, fill='black')
                 
-        # Alternating color (White / Yellow)
+        # Fill alternating color
         current_color = colors[i % 2]
         draw.text((x, y), chunk["text"], font=font, fill=current_color)
         
         img_np = np.array(img)
         chunk_duration = chunk["end"] - chunk["start"]
-        if chunk_duration <= 0:
-            chunk_duration = 0.5 # Safety check
+        if chunk_duration <= 0: chunk_duration = 0.5 
             
         txt_clip = ImageClip(img_np[:, :, :3]).set_duration(chunk_duration)
         mask = ImageClip(img_np[:, :, 3] / 255.0, ismask=True).set_duration(chunk_duration)
         
-        # Position at y=1400 (Center ke niche)
+        # Position at bottom center (y = 1400)
         txt_clip = txt_clip.set_mask(mask).set_position(('center', 1400)).set_start(chunk["start"])
         clips.append(txt_clip)
         
     return clips
 
-# --- IMAGE & NEWS ---
-def get_latest_news():
-    feed = feedparser.parse("https://news.yahoo.com/rss/politics")
-    news_list = []
-    for entry in feed.entries:
-        if len(news_list) >= 3: break
-        title = entry.title.replace('#', '').replace('*', '').strip()
-        img = entry.media_content[0]['url'] if 'media_content' in entry else None
-        if img: news_list.append((title, img))
-    return news_list
 
-def create_square_image_clip(image_url, duration):
-    headers = {"User-Agent": random.choice(USER_AGENTS)}
-    response = requests.get(image_url, headers=headers, timeout=10)
-    if response.status_code != 200: return None
-
-    img = Image.open(BytesIO(response.content)).convert("RGB")
-    size = min(img.width, img.height)
-    offset_x = (img.width - size) // 2
-    offset_y = (img.height - size) // 2
-    img = img.crop((offset_x, offset_y, offset_x + size, offset_y + size))
-    img = img.resize((1000, 1000), Image.Resampling.BILINEAR)
-    
-    img_path = f"temp_sq_{uuid.uuid4().hex[:4]}.jpg"
-    img.save(img_path, quality=90)
-    
-    bg = ColorClip(size=(1080, 1920), color=(0,0,0)).set_duration(duration)
-    img_clip = ImageClip(img_path).set_duration(duration).set_position("center")
-    
-    return CompositeVideoClip([bg, img_clip])
-
-# --- VIDEO ASSEMBLY ---
+# --- VIDEO ASSEMBLY & CLIP MERGING (COMPOSITE) ---
 def create_combined_video(news_items, output_path="politics_viral_short.mp4"):
     clips = []
     for i, (text, img_url) in enumerate(news_items):
+        # 1. Generate Voiceover Audio & Word Timestamps
         audio_path, subs_data = asyncio.run(generate_audio_and_subs(text, i))
         audio_clip = AudioFileClip(audio_path).fx(volumex, 0.75) 
+        duration = audio_clip.duration
         
-        video_with_img = create_square_image_clip(img_url, audio_clip.duration + 0.5)
+        # 2. Create Background Image Clip
+        video_with_img = create_square_image_clip(img_url, duration + 0.5)
         if not video_with_img: continue
         
-        subs = create_caption_clips(subs_data, 900)
+        # 3. Create Caption Clips using the Bulletproof function
+        caption_clips = create_caption_clips(text, subs_data, duration, max_width=1040)
         
-        if subs:
-            video_with_text = CompositeVideoClip([video_with_img] + subs).set_audio(audio_clip)
+        # 4. Merge (Paste) Video Background and Caption Clips together
+        if caption_clips:
+            video_with_text = CompositeVideoClip([video_with_img] + caption_clips).set_audio(audio_clip)
         else:
             video_with_text = video_with_img.set_audio(audio_clip)
             
@@ -296,6 +349,7 @@ def create_combined_video(news_items, output_path="politics_viral_short.mp4"):
         clips.append(video_with_text)
 
     final_video = concatenate_videoclips(clips, method="compose")
+    return final_video
     
     # --- BGM Application (Random Start, Cut & Loop Logic) ---
     # --- BGM Application (Start from 0s, Cut & Loop Logic) ---
