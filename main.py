@@ -17,10 +17,11 @@ nest_asyncio.apply()
 # --- CONFIGURATION ---
 WEBHOOK_URL = os.environ.get("WEBHOOK_URL", "YOUR_WEBHOOK_URL")
 
-# Telegram Setup 
-SUCCESS_TELEGRAM_TOKEN = "8224108699:AAGDSyG07MrGFoiphWy6FsOtaSUraQ87yoI"
-ERROR_TELEGRAM_TOKEN = "8224108699:AAGDSyG07MrGFoiphWy6FsOtaSUraQ87yoI"
-TELEGRAM_CHAT_ID = "7584043609"
+# TELEGRAM CONFIGURATION
+# Agar environment variable/secrets set nahi hain, to ye dummy token aur chat id use karega
+SUCCESS_TELEGRAM_TOKEN = os.environ.get("8224108699:AAGDSyG07MrGFoiphWy6FsOtaSUraQ87yoI")
+ERROR_TELEGRAM_TOKEN = os.environ.get("8224108699:AAGDSyG07MrGFoiphWy6FsOtaSUraQ87yoI")
+TELEGRAM_CHAT_ID = os.environ.get("7584043609")
 
 AUTOMATION_NAME = "USA_Politics_Daily_Bot"
 SOCIAL_MEDIA = "Webhook/CustomPlatform"
@@ -96,47 +97,34 @@ def get_random_item_with_cooling(filepath, history_dict, item_type):
 # --- AUDIO & SUBTITLES ---
 async def generate_audio_and_subs(text, index):
     audio_file = f"temp_audio_{index}.mp3"
-    sub_file = f"temp_sub_{index}.vtt"
     communicate = edge_tts.Communicate(text, "en-US-JennyNeural")
-    submaker = edge_tts.SubMaker()
+    
+    subs_data = [] 
     
     with open(audio_file, "wb") as file:
         async for chunk in communicate.stream():
             if chunk["type"] == "audio":
                 file.write(chunk["data"])
             elif chunk["type"] == "WordBoundary":
-                submaker.create_sub((chunk["offset"], chunk["duration"]), chunk["text"])
+                start_sec = chunk["offset"] / 10_000_000.0
+                end_sec = (chunk["offset"] + chunk["duration"]) / 10_000_000.0
+                subs_data.append({
+                    "start": start_sec,
+                    "end": end_sec,
+                    "text": chunk["text"]
+                })
+                
+    return audio_file, subs_data
 
-    with open(sub_file, "w", encoding="utf-8") as file:
-        file.write(submaker.generate_subs())
-    return audio_file, sub_file
-
-def create_subtitles(vtt_path, audio_clip):
+def create_subtitles(subs_data):
     subs = []
     try:
-        with open(vtt_path, "r", encoding="utf-8") as f: lines = f.readlines()
-        i = 1
-        while i < len(lines):
-            line = lines[i].strip()
-            if "-->" in line:
-                times = line.split(" --> ")
-                def parse_time(t):
-                    h, m, s = t.split(":")
-                    s, ms = s.split(".")
-                    return int(h)*3600 + int(m)*60 + int(s) + int(ms)/1000.0
-                start_t, end_t = parse_time(times[0]), parse_time(times[1])
-                
-                text_line = ""
-                i += 1
-                while i < len(lines) and lines[i].strip() != "":
-                    text_line += lines[i].strip() + " "
-                    i += 1
-                
-                txt_clip = TextClip(text_line.strip(), fontsize=60, color='yellow', font='Arial-Bold', bg_color='black')
-                txt_clip = txt_clip.set_position(('center', 'center')).set_start(start_t).set_end(end_t)
-                subs.append(txt_clip)
-            i += 1
-    except Exception as e: print(f"Subtitle error: {e}")
+        for sub in subs_data:
+            txt_clip = TextClip(sub["text"].strip(), fontsize=60, color='yellow', font='Arial-Bold', bg_color='black')
+            txt_clip = txt_clip.set_position(('center', 'center')).set_start(sub["start"]).set_end(sub["end"])
+            subs.append(txt_clip)
+    except Exception as e: 
+        print(f"Subtitle error: {e}")
     return subs
 
 # --- NEWS & IMAGE ---
@@ -189,11 +177,11 @@ def create_combined_video(news_items, output_path="politics_viral_short.mp4"):
         img_path = create_image_frame(img_url, i)
         if not img_path: continue
             
-        audio_path, vtt_path = asyncio.run(generate_audio_and_subs(text, i))
+        audio_path, subs_data = asyncio.run(generate_audio_and_subs(text, i))
         audio_clip = AudioFileClip(audio_path).fx(volumex, 0.75) 
         img_clip = ImageClip(img_path).set_duration(audio_clip.duration + 0.5)
         
-        subs = create_subtitles(vtt_path, audio_clip)
+        subs = create_subtitles(subs_data)
         video_with_text = CompositeVideoClip([img_clip] + subs).set_audio(audio_clip) if subs else img_clip.set_audio(audio_clip)
         
         if i > 0: video_with_text = video_with_text.crossfadein(0.5)
