@@ -354,22 +354,19 @@ def create_square_image_clip(image_url, duration):
     return CompositeVideoClip([bg, img_clip])
 
 # --- VIDEO ASSEMBLY & CLIP MERGING (COMPOSITE) ---
+# --- VIDEO ASSEMBLY ---
 def create_combined_video(news_items, output_path="politics_viral_short.mp4"):
     clips = []
     for i, (text, img_url) in enumerate(news_items):
-        # 1. Generate Voiceover Audio & Word Timestamps
         audio_path, subs_data = asyncio.run(generate_audio_and_subs(text, i))
         audio_clip = AudioFileClip(audio_path).fx(volumex, 0.75) 
         duration = audio_clip.duration
         
-        # 2. Create Background Image Clip
         video_with_img = create_square_image_clip(img_url, duration + 0.5)
         if not video_with_img: continue
         
-        # 3. Create Caption Clips using the Bulletproof function
         caption_clips = create_caption_clips(text, subs_data, duration, max_width=1040)
         
-        # 4. Merge (Paste) Video Background and Caption Clips together
         if caption_clips:
             video_with_text = CompositeVideoClip([video_with_img] + caption_clips).set_audio(audio_clip)
         else:
@@ -379,27 +376,18 @@ def create_combined_video(news_items, output_path="politics_viral_short.mp4"):
         clips.append(video_with_text)
 
     final_video = concatenate_videoclips(clips, method="compose")
-    return final_video
     
-    # --- BGM Application (Random Start, Cut & Loop Logic) ---
     # --- BGM Application (Start from 0s, Cut & Loop Logic) ---
     try:
         bg_music_path = get_random_bgm()
-        bgm = AudioFileClip(bg_music_path)
-        
-        # Volume set karo (25%)
-        bgm = bgm.fx(volumex, 0.45)
-        
-        # audio_loop automatically 0 seconds se shuru karega aur video length tak cut/repeat karega
+        bgm = AudioFileClip(bg_music_path).fx(volumex, 0.25)
         bgm_looped = audio_loop(bgm, duration=final_video.duration)
-        
-        # Voiceover aur BGM ko mix karo
         final_mixed_audio = CompositeAudioClip([final_video.audio, bgm_looped])
         final_video = final_video.set_audio(final_mixed_audio)
-        
     except Exception as e: 
         print(f"BGM mixing failed: {e}")
 
+    # Video file write karo aur string path return karo
     final_video.write_videofile(output_path, fps=24, codec="libx264", audio_codec="aac")
     return output_path
 
