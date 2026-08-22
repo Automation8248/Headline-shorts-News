@@ -280,7 +280,7 @@ def create_combined_video(news_items, output_path="politics_viral_short.mp4"):
         bgm = AudioFileClip(bg_music_path)
         
         # Volume set karo (25%)
-        bgm = bgm.fx(volumex, 0.25)
+        bgm = bgm.fx(volumex, 0.45)
         
         # audio_loop automatically 0 seconds se shuru karega aur video length tak cut/repeat karega
         bgm_looped = audio_loop(bgm, duration=final_video.duration)
